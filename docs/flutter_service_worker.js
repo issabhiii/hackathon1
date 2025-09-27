@@ -9,7 +9,7 @@ const RESOURCES = {"assets/AssetManifest.bin": "bce99f483b7fb9f5d2c41291c8743c93
 "assets/assets/accuray.ico": "44c76098f8e106a5d4471ad81382e3c4",
 "assets/assets/accuray.png": "516d62d0e4fdd1ea208d39240d3009f3",
 "assets/FontManifest.json": "1ee00d31df7d0b30bfafc1cf4922abf8",
-"assets/fonts/MaterialIcons-Regular.otf": "749ee53219e1b8c682782084f0797da0",
+"assets/fonts/MaterialIcons-Regular.otf": "515736f1f94f7f8acae38d8ecb79447d",
 "assets/NOTICES": "7591b2308b9d016428a5f1be3ef41c73",
 "assets/packages/cupertino_icons/assets/CupertinoIcons.ttf": "33b7d9392238c04c131b6ce224e13711",
 "assets/packages/lucide_icons/assets/lucide.ttf": "03f254a55085ec6fe9a7ae1861fda9fd",
@@ -25,16 +25,16 @@ const RESOURCES = {"assets/AssetManifest.bin": "bce99f483b7fb9f5d2c41291c8743c93
 "canvaskit/skwasm.wasm": "39dd80367a4e71582d234948adc521c0",
 "favicon.png": "5dcef449791fa27946b3d35ad8803796",
 "flutter.js": "83d881c1dbb6d6bcd6b42e274605b69c",
-"flutter_bootstrap.js": "44ddf690cb686df670c5b0909f0451cb",
+"flutter_bootstrap.js": "1e0b049a2e04559cd58a3bd064c576a4",
 "icons/Icon-192.png": "ac9a721a12bbc803b44f645561ecb1e1",
 "icons/Icon-512.png": "96e752610906ba2a93c65f8abe1645f1",
 "icons/Icon-maskable-192.png": "c457ef57daa1d16f64b27b786ec2ea3c",
 "icons/Icon-maskable-512.png": "301a7604d45b3e739efc881eb04896ea",
-"index.html": "4e77ab3279e3771c9af2d6736e091225",
-"/": "4e77ab3279e3771c9af2d6736e091225",
-"main.dart.js": "7badc17f4112792e4b99609882684772",
+"index.html": "1b30594608023bf60ad7867e8e185a05",
+"/": "1b30594608023bf60ad7867e8e185a05",
+"main.dart.js": "f6ac5baffa4047e54e07c8c692cb0a26",
 "manifest.json": "88cffc09c9f533f7236c045e12e216ba",
-"version.json": "83ac1a9cdcbb2518fc76cbeb0e85f45c"};
+"version.json": "4ca5a099d410f022c3c64a84fd66a0a8"};
 // The application shell files that are downloaded before a service worker can
 // start.
 const CORE = ["main.dart.js",
