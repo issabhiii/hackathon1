@@ -9,20 +9,28 @@
 <body>
   <main>
     <h1>Image Reader (OCR)</h1>
+
     <div class="uploader" id="dropzone">
       <p><strong>Drop an image</strong> here or
-        <label class="link"><input id="file" type="file" accept="image/*" hidden />choose a file</label></p>
-      <p class="small">JPG / PNG. Default language: <code>eng</code> (Tesseract) or <code>en</code> (PaddleOCR).</p>
+        <label class="link">
+          <input id="file" type="file" accept="image/*" hidden />
+          choose a file
+        </label>
+      </p>
+      <p class="small">JPG / PNG. Tesseract lang: <code>eng</code>. EasyOCR uses <code>en</code>.</p>
     </div>
 
     <div class="controls">
       <label>Tesseract lang: <input id="lang" value="eng" /></label>
-      <button id="submitBtn">Run OCR</button>
+      <button id="submitBtn" type="button">Run OCR</button>
+      <button id="extractBtn" type="button">Extract (LLM)</button>
     </div>
 
-    <pre id="output" class="output" placeholder="OCR text will appear here..."></pre>
+    <div id="status" class="small">status: (idle)</div>
+    <pre id="output" class="output" placeholder="OCR / JSON will appear here..."></pre>
   </main>
 
-  <script src="/static/script.js"></script>
+  <!-- cache-bust to avoid stale JS -->
+  <script src="/static/script.js?v=3"></script>
 </body>
 </html>
