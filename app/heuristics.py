@@ -1,4 +1,3 @@
-# app/heuristics.py
 from typing import Dict, Any, List, Tuple, Optional
 import re
 from app.models import ExtractedPart, ValueWithMeta
@@ -6,7 +5,7 @@ from app.models import ExtractedPart, ValueWithMeta
 _NUM = r"[-+]?\d+(?:\.\d+)?"
 _INCH = r'(?:in|inch|")'
 _MM = r'(?:mm|millimet(?:er|re)s?)'
-_UNIT_NUM = rf"{_NUM}\s*(?:{_INCH}|{_MM}|psi|lbs|RPM|rpm|°C|°F|C|F|kg|g|lb|oz)?"
+_UNIT_NUM = rf"{_NUM}\s*(?:{_INCH}|{_MM}|psi|lbs|N|RPM|rpm|°C|°F|C|F|kg|g|lb|oz|%)?"
 
 def _vw(value: Optional[str], unit: Optional[str], conf: float, src: Dict[str, Any]) -> Optional[ValueWithMeta]:
     if value is None:
@@ -15,16 +14,8 @@ def _vw(value: Optional[str], unit: Optional[str], conf: float, src: Dict[str, A
         "text": src.get("text",""), "bbox": src.get("bbox",[0,0,0,0]), "confidence": src.get("confidence",0.5)
     }])
 
-def _find_first(patterns: List[re.Pattern], text: str) -> Optional[re.Match]:
-    for p in patterns:
-        m = p.search(text)
-        if m:
-            return m
-    return None
-
 def _unitize(val: str) -> Tuple[str, Optional[str]]:
-    # split "0.3750 in" -> ("0.3750", "in"), "38000 RPM" -> ("38000", "RPM")
-    m = re.match(rf"^\s*({_NUM})\s*([A-Za-z°\"/]+)?\s*$", val)
+    m = re.match(rf"^\s*({_NUM})\s*([A-Za-z°\"/%]+)?\s*$", val)
     if not m:
         return val.strip(), None
     v, u = m.group(1), m.group(2)
@@ -36,11 +27,11 @@ def heuristics_from_blocks(blocks: List[Dict[str, Any]]) -> ExtractedPart:
     text_lines = [b.get("text","") for b in blocks if (b.get("text") or "").strip()]
     joined = "\n".join(text_lines)
 
-    # ---- quick picks ----
-    # common keys
+    # IDs / names / manufacturer
     part_name = None
     manu = None
     manu_id = None
+
     if m := re.search(r"\b(Part\s*(?:No\.?|Number)|P/N)\b[:#]?\s*([A-Za-z0-9\-\._/]+)", joined, re.I):
         manu_id = m.group(2).strip()
     if m := re.search(r"\b(Title|Description)\b[:#]?\s*([^\n]+)", joined, re.I):
@@ -48,27 +39,25 @@ def heuristics_from_blocks(blocks: List[Dict[str, Any]]) -> ExtractedPart:
     if m := re.search(r"\b(Manufacturer|Vendor|Brand)\b[:#]?\s*([^\n]+)", joined, re.I):
         manu = m.group(2).strip()
 
-    # materials
+    # Material
     material = None
-    if m := re.search(r"\b(Material|Stainless(?:\s*Steel)?|Aluminum|Brass|Bronze|Plastic|Nylon)\b[:\-]?\s*([^\n]*)", joined, re.I):
-        # prefer "Stainless steel" line on datasheets
+    if m := re.search(r"\b(Stainless(?:\s*Steel)?|Aluminum|Brass|Bronze|Plastic|Nylon|Material[:\-]?\s*[^\n]*)", joined, re.I):
         mat_line = m.group(0).strip()
         material = re.sub(r"^(Material[:\-]?\s*)","",mat_line, flags=re.I)
 
-    # dimensions (bearings/spec sheets often list three)
+    # Dimensions
     width = height = depth = diagonal = None
-    candidates = [
+    patterns = [
         (r"\b(?:Inner\s*diameter|ID|Bore)\b[:\s]*(" + _UNIT_NUM + ")", "width"),
         (r"\b(?:Outer\s*diameter|OD)\b[:\s]*(" + _UNIT_NUM + ")", "height"),
         (r"\b(?:Width|W|Thickness)\b[:\s]*(" + _UNIT_NUM + ")", "depth"),
         (r"\bDiagonal\b[:\s]*(" + _UNIT_NUM + ")", "diagonal"),
-        # generic lines like "0.3750 in" labeled (ID), (OD), (W):
         (r"\b(ID)\b.*?(" + _UNIT_NUM + ")", "width"),
         (r"\b(OD)\b.*?(" + _UNIT_NUM + ")", "height"),
         (r"\b(W|Width)\b.*?(" + _UNIT_NUM + ")", "depth"),
     ]
     for line in text_lines:
-        for pat, slot in [(re.compile(p, re.I), s) for p,s in candidates]:
+        for pat, slot in [(re.compile(p, re.I), s) for p,s in patterns]:
             m = pat.search(line)
             if not m:
                 continue
@@ -80,24 +69,22 @@ def heuristics_from_blocks(blocks: List[Dict[str, Any]]) -> ExtractedPart:
             if slot=="depth" and not depth: depth = vw
             if slot=="diagonal" and not diagonal: diagonal = vw
 
-    # temperature
+    # Temperature
     tmin = tmax = trating = None
     for line in text_lines:
         if m := re.search(r"(-?\d+)\s*°?\s*C", line, re.I):
-            t = _vw(m.group(1), "°C", 0.7, {"text": line})
-            tmin = tmin or t
+            tmin = tmin or _vw(m.group(1), "°C", 0.7, {"text": line})
         if m := re.search(r"(-?\d+)\s*°?\s*F", line, re.I):
-            t = _vw(m.group(1), "°F", 0.7, {"text": line})
-            tmax = tmax or t
+            tmax = tmax or _vw(m.group(1), "°F", 0.7, {"text": line})
         if re.search(r"\bTemperature\b|\btemp\b", line, re.I):
             trating = trating or _vw(line.strip(), None, 0.5, {"text": line})
 
-    # pressure
+    # Pressure
     pressure = None
     if m := re.search(rf"\b({_NUM})\s*(psi|bar|kPa)\b", joined, re.I):
         pressure = _vw(m.group(1), m.group(2), 0.7, {"text": m.group(0)})
 
-    # load ratings / RPM (bearings)
+    # Features (RPM, load ratings)
     features: List[ValueWithMeta] = []
     for line in text_lines:
         if m := re.search(rf"\b({_NUM})\s*(RPM|rpm)\b", line):
@@ -107,7 +94,7 @@ def heuristics_from_blocks(blocks: List[Dict[str, Any]]) -> ExtractedPart:
         if m := re.search(rf"\bStatic load rating.*?\b({_NUM})\s*(lbs|N)\b", line, re.I):
             features.append(_vw(f"static_load:{m.group(1)}", m.group(2), 0.8, {"text": line}))
 
-    # simple price
+    # Price
     price = None
     if m := re.search(r"\$\s*([0-9]+(?:\.[0-9]{2})?)", joined):
         price = _vw(m.group(1), "USD", 0.8, {"text": m.group(0)})
@@ -120,9 +107,7 @@ def heuristics_from_blocks(blocks: List[Dict[str, Any]]) -> ExtractedPart:
         application=None,
         price=price,
         weight=None,
-        dimensions={
-            "width": width, "height": height, "depth": depth, "diagonal": diagonal
-        },
+        dimensions={"width": width, "height": height, "depth": depth, "diagonal": diagonal},
         temperature={"min": tmin, "max": tmax, "rating": trating},
         resolution=None, pressure=pressure, material=_vw(material, None, 0.6, {"text": material or ""}) if material else None,
         features=[f for f in features if f]

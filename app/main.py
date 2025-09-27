@@ -1,5 +1,3 @@
-# app/main.py
-
 from fastapi import FastAPI, File, UploadFile, Query, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,50 +5,52 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import os, json, http.client, traceback
 
-# load .env if present (for OPENAI_API_KEY, USE_CLOUD, OPENAI_MODEL, etc.)
+# env
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass
 
-# ---- app modules ----
-from app.ocr import read_image, preprocess, ocr                   # Tesseract path
-from app.ocr_easyocr import ocr_structured as easy_ocr_structured # EasyOCR path
+# OCR + helpers
+from app.ocr import read_image, preprocess, ocr
+from app.ocr_easyocr import ocr_structured as easy_ocr_structured
+from app.pdf_ingest import pdf_to_blocks
+
+# legacy part-extraction (kept for completeness)
 from app.models import ExtractResponse
-from app.extractor_llm import extract_with_llm                    # local (Ollama)
-from app.extractor_cloud import extract_with_cloud                # cloud (OpenAI-compatible)
+from app.extractor_llm import extract_with_llm
+from app.extractor_cloud import extract_with_cloud
+
+# STEP 3: form-oriented schema + extractor (text-only)
+from app.models_form import SpecPayload
+from app.extractor_cloud_form import extract_spec_with_cloud
+
+# STEP 4: Vision → form extractor
+from app.extractor_cloud_form_vision import extract_spec_with_cloud_vision as extract_spec_form_vision
 
 app = FastAPI(title="Image Reader (OCR)", debug=True)
 
-# ---- CORS: open for local dev ----
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"],
 )
 
-# ---- static site (index.html + css/js) ----
+# static
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/", response_class=HTMLResponse)
 def index():
     return FileResponse("static/index.html")
 
-# ---- small response model for /api/parse ----
 class ParseResponse(BaseModel):
     text: str
 
-# ===============================
-#            ENDPOINTS
-# ===============================
-
-# 1) Classic OCR via Tesseract (single string)
+# ---------- OCR basic ----------
 @app.post("/api/parse", response_model=ParseResponse)
-async def parse_image(
-    file: UploadFile = File(...),
-    lang: str = Query("eng", description="Tesseract language code, e.g. eng or eng+spa")
-):
+async def parse_image(file: UploadFile = File(...), lang: str = Query("eng")):
     try:
         content = await file.read()
         img = read_image(content)
@@ -63,74 +63,116 @@ async def parse_image(
         raise
     except Exception as e:
         traceback.print_exc()
-        return JSONResponse(status_code=500, content={"error": "parse failed", "detail": str(e)})
+        return JSONResponse(status_code=500, content={"error":"parse failed","detail":str(e)})
 
-# 2) Structured OCR via EasyOCR (blocks + columns)
 @app.post("/api/parse-structured")
-async def parse_image_structured(
-    file: UploadFile = File(...),
-    lang: str = Query("en", description="EasyOCR languages, e.g. 'en' or 'en,es'")
-):
+async def parse_image_structured(file: UploadFile = File(...), lang: str = Query("en")):
     try:
         content = await file.read()
-        data = easy_ocr_structured(content, langs=lang)
+        ctype = file.content_type or ""
+        if ctype == "application/pdf" or file.filename.lower().endswith(".pdf"):
+            data = pdf_to_blocks(content, ocr_fn=easy_ocr_structured)
+        else:
+            data = easy_ocr_structured(content, langs=lang)
         return data
     except Exception as e:
         traceback.print_exc()
-        return JSONResponse(status_code=400, content={"error": "structured OCR error", "detail": str(e)})
+        return JSONResponse(status_code=400, content={"error":"structured OCR error","detail":str(e)})
 
-# 3) Extract: OCR -> heuristics -> LLM (local or cloud)
+# ---------- legacy extract (kept) ----------
 @app.post("/api/extract", response_model=ExtractResponse)
 async def extract_endpoint(
     file: UploadFile = File(...),
-    lang: str = Query("en", description="EasyOCR languages, e.g. 'en' or 'en,es'"),
-    debug: int = Query(0, description="set to 1 to return heuristics-only (skip LLM)"),
-    cloud: int = Query(0, description="set to 1 to force cloud LLM if configured"),
-    model: str = Query(None, description="optional LLM model override (local or cloud)")
+    lang: str = Query("en"),
+    debug: int = Query(0),
+    cloud: int = Query(0),
+    model: str = Query(None)
 ):
     try:
-        # --- (A) OCR first (structured) ---
         content = await file.read()
-        ocr_data = easy_ocr_structured(content, langs=lang)
+        ctype = file.content_type or ""
+        if ctype == "application/pdf" or file.filename.lower().endswith(".pdf"):
+            ocr_data = pdf_to_blocks(content, ocr_fn=easy_ocr_structured)
+        else:
+            ocr_data = easy_ocr_structured(content, langs=lang)
 
-        # flatten blocks
         blocks = [{
-            "text": it["text"],
-            "confidence": it["confidence"],
-            "bbox": it["bbox"],
-            "quad": it["quad"],
+            "text": it["text"], "confidence": it["confidence"],
+            "bbox": it["bbox"], "quad": it["quad"],
         } for col in ocr_data.get("columns", []) for it in col.get("items", [])]
 
-        # build readable text (for UI / cloud prompt)
-        lines = [(it["text"] or "").strip() for col in ocr_data.get("columns", []) for it in col.get("items", [])]
-        ocr_text = "\n".join([t for t in lines if t])
+        lines = [(it["text"] or "").strip()
+                 for col in ocr_data.get("columns", [])
+                 for it in col.get("items", [])
+                 if (it.get("text") or "").strip()]
+        ocr_text = "\n".join(lines)
 
-        # optional early return to verify OCR + heuristics only
         if debug == 1:
             from app.heuristics import heuristics_from_blocks
             heur = heuristics_from_blocks(blocks)
-            return ExtractResponse(model_used="heuristic-only", part=heur, raw_text=ocr_text, notes="(debug=1) returned before LLM")
+            return ExtractResponse(model_used="heuristic-only", part=heur, raw_text=ocr_text, notes="(debug=1)")
 
-        # --- (B) Choose LLM path ---
-        use_cloud_env = os.getenv("USE_CLOUD", "0") == "1"
+        use_cloud_env = os.getenv("USE_CLOUD","0") == "1"
         if cloud == 1 or use_cloud_env:
-            # Cloud GPU model (OpenAI compatible)
-            result = extract_with_cloud(ocr_text=ocr_text, blocks=blocks, model_name=model)
+            return extract_with_cloud(ocr_text=ocr_text, blocks=blocks, model_name=model)
         else:
-            # Local Ollama model
-            result = extract_with_llm(ocr_text=ocr_text, blocks=blocks, model_override=model)
-
-        return result
+            return extract_with_llm(ocr_text=ocr_text, blocks=blocks, model_override=model)
 
     except Exception as e:
         traceback.print_exc()
-        return JSONResponse(status_code=500, content={"error": "extract endpoint failed", "detail": str(e)})
+        return JSONResponse(status_code=500, content={"error":"extract endpoint failed","detail":str(e)})
 
-# ===============================
-#           HEALTH CHECKS
-# ===============================
+# ---------- STEP 3: Spec JSON (cloud LLM → your form schema) ----------
+@app.post("/api/spec", response_model=SpecPayload)
+async def spec_endpoint(file: UploadFile = File(...), lang: str = Query("en"), model: str = Query(None)):
+    try:
+        content = await file.read()
+        ctype = file.content_type or ""
+        if ctype == "application/pdf" or file.filename.lower().endswith(".pdf"):
+            ocr_data = pdf_to_blocks(content, ocr_fn=easy_ocr_structured)
+        else:
+            ocr_data = easy_ocr_structured(content, langs=lang)
 
-# Ollama health (local LLM daemon)
+        lines = [(it["text"] or "").strip()
+                 for col in ocr_data.get("columns", [])
+                 for it in col.get("items", [])
+                 if (it.get("text") or "").strip()]
+        ocr_text = "\n".join(lines)
+
+        spec = extract_spec_with_cloud(ocr_text=ocr_text, model_name=model)
+        return spec
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error":"spec mapping failed","detail":str(e)})
+
+# ---------- STEP 4: Spec JSON via VISION (image-aware) ----------
+@app.post("/api/spec-vision", response_model=SpecPayload)
+async def spec_vision_endpoint(file: UploadFile = File(...), model: str = Query(None)):
+    try:
+        content = await file.read()
+        ctype = file.content_type or ""
+        images: list[bytes] = []
+        if ctype == "application/pdf" or file.filename.lower().endswith(".pdf"):
+            import fitz, cv2, numpy as np
+            doc = fitz.open(stream=content, filetype="pdf")
+            for i, page in enumerate(doc):
+                if i >= 3: break
+                pix = page.get_pixmap(matrix=fitz.Matrix(2,2))
+                img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+                if pix.n == 4: img = img[:,:,:3]
+                ok, buf = cv2.imencode(".png", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+                if ok: images.append(buf.tobytes())
+            doc.close()
+        else:
+            images = [content]
+
+        spec = extract_spec_form_vision(images=images, model_name=model)
+        return spec
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"error":"spec-vision failed","detail":str(e)})
+
+# ---------- health ----------
 @app.get("/api/ollama-health")
 def ollama_health():
     try:
@@ -144,7 +186,6 @@ def ollama_health():
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-# Minimal OCR smoke test (EasyOCR path)
 @app.post("/api/ocr-health")
 async def ocr_health(file: UploadFile = File(...)):
     try:
@@ -154,4 +195,4 @@ async def ocr_health(file: UploadFile = File(...)):
         n_items = sum(len(c.get("items") or []) for c in (data.get("columns") or []))
         return {"columns": n_cols, "items": n_items}
     except Exception as e:
-        return JSONResponse(status_code=400, content={"error": "ocr-health failed", "detail": str(e)})
+        return JSONResponse(status_code=400, content={"error":"ocr-health failed","detail":str(e)})

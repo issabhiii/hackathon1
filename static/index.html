@@ -3,34 +3,35 @@
 <head>
   <meta charset="utf-8" />
   <title>Image Reader (OCR)</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <main>
+  <div class="container">
     <h1>Image Reader (OCR)</h1>
+    <p>Drop an image or PDF, then run OCR and extraction.</p>
 
-    <div class="uploader" id="dropzone">
-      <p><strong>Drop an image</strong> here or
-        <label class="link">
-          <input id="file" type="file" accept="image/*" hidden />
-          choose a file
-        </label>
-      </p>
-      <p class="small">JPG / PNG. Tesseract lang: <code>eng</code>. EasyOCR uses <code>en</code>.</p>
+    <div class="uploader" id="drop">
+      <input id="file" type="file" accept="image/*,application/pdf" />
+      <p>JPG / PNG / PDF.</p>
     </div>
 
     <div class="controls">
-      <label>Tesseract lang: <input id="lang" value="eng" /></label>
-      <button id="submitBtn" type="button">Run OCR</button>
-      <button id="extractBtn" type="button">Extract (LLM)</button>
+      <label>EasyOCR Lang(s): <input id="lang" value="en" /></label>
+      <button id="submitBtn">Run OCR</button>
+      <button id="extractBtn">Extract (LLM)</button>
+      <button id="extractCloudBtn">Extract (Cloud)</button>
+      <!-- form-oriented extractors -->
+      <button id="buildSpecBtn">Build Spec JSON</button>
+      <button id="buildSpecVisionBtn">Build Spec (Vision)</button>
     </div>
 
-    <div id="status" class="small">status: (idle)</div>
-    <pre id="output" class="output" placeholder="OCR / JSON will appear here..."></pre>
-  </main>
+    <h3>OCR Text</h3>
+    <pre id="output"></pre>
 
-  <!-- cache-bust to avoid stale JS -->
-  <script src="/static/script.js?v=3"></script>
+    <h3>Result</h3>
+    <pre id="result"></pre>
+  </div>
+
+  <script src="/static/script.js?v=7"></script>
 </body>
 </html>

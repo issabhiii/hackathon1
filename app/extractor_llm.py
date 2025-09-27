@@ -1,29 +1,22 @@
-# app/extractor_llm.py
 import json, re, http.client
 from typing import Dict, Any, List, Optional
 from app.models import ExtractedPart, ExtractResponse
 from app.heuristics import heuristics_from_blocks
 
-# ---- Ollama ----
 OLLAMA_HOST = "localhost"
 OLLAMA_PORT = 11434
-# Use a small local model you have pulled (faster on CPU)
+# Use a small local model you have pulled (faster on CPU):
 # e.g. "qwen2.5:3b-instruct" or "phi3:3.8b-mini-instruct"
 OLLAMA_MODEL = "qwen2.5:3b-instruct"
 
-# ---- Limits (speed) ----
 TIMEOUT_SECS = 120
 NUM_PREDICT  = 140
 NUM_CTX      = 1024
-MAX_LINES    = 40      # max OCR lines to send
-MAX_LINE_LEN = 120     # trim long lines
+MAX_LINES    = 40
+MAX_LINE_LEN = 120
 
-SYSTEM = (
-    "You are an information extraction assistant. "
-    "You MUST return valid JSON only. No prose, no markdown."
-)
+SYSTEM = "You are an information extraction assistant. You MUST return valid JSON only. No prose, no markdown."
 
-# Few-shot: a tiny example (bearing-ish spec) to guide the model
 FEW_SHOT_USER = (
 "Extract fields from:\n"
 "Title / Description: ACTUATOR PIVOT BEARING\n"
@@ -51,7 +44,7 @@ FEW_SHOT_ASSIST = json.dumps({
   },
   "temperature":{"min":None,"max":None,"rating":None},
   "resolution":None,
-  "pressure":None,
+    "pressure":None,
   "material":{"value":"Stainless steel","unit":None,"confidence":0.8,"sources":[]},
   "features":[
     {"value":"dynamic_load:748","unit":"lbs","confidence":0.85,"sources":[]},
@@ -84,7 +77,7 @@ def _post(conn: http.client.HTTPConnection, path: str, payload: dict) -> tuple[i
     return resp.status, resp.read().decode("utf-8", errors="ignore")
 
 def _ollama_generate(messages: List[Dict[str,str]], model_name: str) -> str:
-    # prefer /api/chat with format=json (works well across models)
+    # prefer /api/chat with format=json
     conn = _http()
     status, data = _post(conn, "/api/chat", {
         "model": model_name,
@@ -109,7 +102,7 @@ def _ollama_generate(messages: List[Dict[str,str]], model_name: str) -> str:
     raise RuntimeError(f"Ollama HTTP {status}/{status2}: {data or data2}")
 
 def _keep_relevant_lines(lines: List[str]) -> List[str]:
-    # rank by keyword hit + has number/units
+    import re
     kws = [
         "part", "title", "description", "material", "stainless", "aluminum", "steel",
         "id", "od", "width", "thickness", "diagonal", "diameter", "bore",
@@ -126,16 +119,14 @@ def _keep_relevant_lines(lines: List[str]) -> List[str]:
         scored.append((score, s))
     scored.sort(key=lambda x: x[0], reverse=True)
     kept = [s[:MAX_LINE_LEN] for _, s in scored[:MAX_LINES]]
-    # always keep at least some head lines as context
     head = [l[:MAX_LINE_LEN] for l in lines[:8]]
-    return list(dict.fromkeys(head + kept))  # de-dupe, keep order
+    return list(dict.fromkeys(head + kept))
 
 def _try_parse_json(text: str) -> Optional[dict]:
     text = text.strip().strip("`").strip()
     try:
         return json.loads(text)
     except Exception:
-        # salvage: biggest {...}
         starts = [m.start() for m in re.finditer(r"\{", text)]
         ends   = [m.start() for m in re.finditer(r"\}", text)]
         for s in starts:
@@ -148,16 +139,11 @@ def _try_parse_json(text: str) -> Optional[dict]:
                         pass
         return None
 
-def extract_with_llm(
-    ocr_text: str,
-    blocks: List[Dict[str, Any]],
-    model_override: Optional[str] = None
-) -> ExtractResponse:
-    # heuristics first
+def extract_with_llm(ocr_text: str, blocks: List[Dict[str, Any]], model_override: Optional[str] = None) -> ExtractResponse:
+    from app.heuristics import heuristics_from_blocks
     heur = heuristics_from_blocks(blocks)
     candidates_json = json.dumps(heur.dict(), ensure_ascii=False)
 
-    # build ranked lines from blocks (preserve quick context + best hits)
     lines = [b.get("text","") for b in blocks if (b.get("text") or "").strip()]
     lines = _keep_relevant_lines(lines)
 
