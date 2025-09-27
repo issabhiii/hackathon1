@@ -12,7 +12,8 @@ import 'login_screen.dart'; // for Login / Sign Up CTA
 /// ---------------------------
 class UploadPage extends StatefulWidget {
   final void Function(Map<String, String>) onSave; // kept for compatibility
-  const UploadPage({super.key, required this.onSave});
+  final int? editId; // NEW: support edit mode
+  const UploadPage({super.key, required this.onSave, this.editId});
 
   @override
   State<UploadPage> createState() => _UploadPageState();
@@ -127,7 +128,7 @@ class _UploadPageState extends State<UploadPage> {
     );
   }
 
-  Future<void> _goToForm() async {
+  Future<void> _goToForm({int? editId}) async {
     if (_blocked) {
       _snack(
         _loginRequired
@@ -138,8 +139,15 @@ class _UploadPageState extends State<UploadPage> {
       return;
     }
 
-    if ((partName ?? '').trim().isEmpty ||
-        (applicantName ?? '').trim().isEmpty) {
+    final isExecutive = (_clearance ?? '').toLowerCase() == 'executive';
+    if (editId != null && !isExecutive) {
+      _snack('Only executives can edit requests', error: true);
+      return;
+    }
+
+    if (editId == null &&
+        ((partName ?? '').trim().isEmpty ||
+            (applicantName ?? '').trim().isEmpty)) {
       _snack('Please enter both Part Name and Applicant Name.', error: true);
       return;
     }
@@ -148,8 +156,9 @@ class _UploadPageState extends State<UploadPage> {
       context,
       MaterialPageRoute(
         builder: (_) => ApplicantFormPage(
-          initialPartName: partName!.trim(),
-          initialApplicantName: applicantName!.trim(),
+          initialPartName: partName?.trim(),
+          initialApplicantName: applicantName?.trim(),
+          editId: editId,
         ),
       ),
     );
@@ -157,7 +166,6 @@ class _UploadPageState extends State<UploadPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Always fill the viewport so the overlay is truly full-screen.
     return LayoutBuilder(
       builder: (context, constraints) {
         return SizedBox(
@@ -197,84 +205,340 @@ class _UploadPageState extends State<UploadPage> {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Center(
-        child: Card(
-          elevation: 4,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                Text(
-                  "Start a New Request",
-                  style: Theme.of(context).textTheme.headlineSmall,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: Column(
+            children: [
+              Card(
+                elevation: 4,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24),
                 ),
-                const SizedBox(height: 16),
-
-                TextField(
-                  enabled: !_blocked,
-                  decoration: const InputDecoration(
-                    labelText: "Part Name *",
-                    border: OutlineInputBorder(),
-                  ),
-                  onChanged: (v) => partName = v,
-                ),
-                const SizedBox(height: 12),
-
-                TextField(
-                  enabled: !_blocked,
-                  controller: _applicantNameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: "Applicant Name *",
-                    border: OutlineInputBorder(),
-                  ),
-                  onChanged: (v) => applicantName = v,
-                ),
-                const SizedBox(height: 12),
-
-                GestureDetector(
-                  onTap: pickFile,
-                  child: AbsorbPointer(
-                    absorbing: _blocked,
-                    child: Container(
-                      height: 120,
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey),
-                        borderRadius: BorderRadius.circular(16),
-                        color: Colors.grey[50],
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      Text(
+                        widget.editId != null
+                            ? 'Edit Request'
+                            : 'Start a New Request',
+                        style: Theme.of(context).textTheme.headlineSmall,
                       ),
-                      child: Center(
-                        child: Text(
-                          selectedFile?.name ??
-                              (_blocked
-                                  ? (_loginRequired
-                                        ? "Please log in to attach files"
-                                        : "Locked (awaiting approval)")
-                                  : "Tap to select file (optional)"),
-                          style: TextStyle(color: Colors.grey[700]),
+                      const SizedBox(height: 16),
+
+                      TextField(
+                        enabled: !_blocked,
+                        decoration: const InputDecoration(
+                          labelText: 'Part Name *',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (v) => partName = v,
+                      ),
+                      const SizedBox(height: 12),
+
+                      TextField(
+                        enabled: !_blocked,
+                        controller: _applicantNameCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Applicant Name *',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (v) => applicantName = v,
+                      ),
+                      const SizedBox(height: 12),
+
+                      GestureDetector(
+                        onTap: pickFile,
+                        child: AbsorbPointer(
+                          absorbing: _blocked,
+                          child: Container(
+                            height: 120,
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey),
+                              borderRadius: BorderRadius.circular(16),
+                              color: Colors.grey[50],
+                            ),
+                            child: Center(
+                              child: Text(
+                                selectedFile?.name ??
+                                    (_blocked
+                                        ? (_loginRequired
+                                              ? 'Please log in to attach files'
+                                              : 'Locked (awaiting approval)')
+                                        : 'Tap to select file (optional)'),
+                                style: TextStyle(color: Colors.grey[700]),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
+
+                      const SizedBox(height: 20),
+
+                      FilledButton.icon(
+                        onPressed: _blocked
+                            ? null
+                            : () => _goToForm(editId: widget.editId),
+                        icon: const Icon(Icons.arrow_forward),
+                        label: Text(
+                          widget.editId != null
+                              ? 'Edit This Request'
+                              : 'Continue to Form',
+                        ),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(double.infinity, 50),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-
-                const SizedBox(height: 20),
-
-                FilledButton.icon(
-                  onPressed: _blocked ? null : _goToForm,
-                  icon: const Icon(Icons.arrow_forward),
-                  label: const Text("Continue to Form"),
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 50),
-                  ),
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 32),
+              if (!_blocked) _buildMyProposalsCard(),
+            ],
           ),
         ),
       ),
     );
+  }
+
+  Widget _buildMyProposalsCard() {
+    final filterName = (applicantName ?? _applicantNameCtrl.text).trim();
+    if (filterName.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return FutureBuilder<List<dynamic>>(
+      future: Supabase.instance.client
+          .from('info')
+          .select()
+          .eq('applicant_name', filterName)
+          .order('created_at', ascending: false),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SizedBox(
+            height: 80,
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        if (snapshot.hasError) {
+          return Card(
+            elevation: 3,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                'Failed to load proposals: ${snapshot.error}',
+                style: const TextStyle(color: Colors.red),
+              ),
+            ),
+          );
+        }
+
+        final raw = snapshot.data ?? const <dynamic>[];
+        if (raw.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        final proposals = raw.cast<Map<String, dynamic>>();
+
+        return Card(
+          elevation: 3,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Saved Records',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                ...proposals.map((row) {
+                  final status = (row['status'] as String?)?.trim();
+                  final rawId = row['id'];
+                  final editId = rawId is int ? rawId : int.tryParse('$rawId');
+                  final displayStatus = (status != null && status.isNotEmpty)
+                      ? status.toUpperCase()
+                      : 'NORMAL';
+                  final team = row['team_requesting'] as String? ?? 'Other';
+                  final createdAt = row['created_at'] as String?;
+                  final date = createdAt != null 
+                      ? DateTime.tryParse(createdAt)?.toIso8601String().split('T')[0] 
+                      : '2025-09-27';
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey[300]!),
+                    ),
+                    child: Row(
+                      children: [
+                        // Document icon
+                        Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: Colors.blue[600],
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Icon(
+                            Icons.description,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        
+                        // Main content
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Part name (title)
+                              Text(
+                                row['partname'] as String? ?? 'Untitled Part',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              
+                              // Author with person icon
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.person,
+                                    size: 16,
+                                    color: Colors.grey,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    filterName,
+                                    style: const TextStyle(
+                                      color: Colors.grey,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              
+                              // Team with group icon
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.group,
+                                    size: 16,
+                                    color: Colors.grey,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    team,
+                                    style: const TextStyle(
+                                      color: Colors.grey,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        
+                        // Status and edit button
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue[100],
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: Text(
+                                    displayStatus,
+                                    style: TextStyle(
+                                      color: Colors.blue[800],
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                IconButton(
+                                  onPressed: editId != null 
+                                      ? () => _editProposal(row, editId!)
+                                      : null,
+                                  icon: const Icon(
+                                    Icons.edit,
+                                    color: Colors.grey,
+                                    size: 20,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            
+                            // Date
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.access_time,
+                                  size: 14,
+                                  color: Colors.grey,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  date ?? '2025-09-27',
+                                  style: const TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _editProposal(Map<String, dynamic> proposal, int editId) {
+    // Populate the form fields with the proposal data
+    setState(() {
+      partName = proposal['partname'] as String?;
+      applicantName = proposal['applicant_name'] as String?;
+      _applicantNameCtrl.text = applicantName ?? '';
+    });
+    
+    // Navigate to the form with the edit ID
+    _goToForm(editId: editId);
   }
 }
 
@@ -363,16 +627,18 @@ class _BlockOverlay extends StatelessWidget {
 }
 
 /// ---------------------------
-/// ApplicantFormPage
+/// ApplicantFormPage (with edit)
 /// ---------------------------
 class ApplicantFormPage extends StatefulWidget {
   final String? initialPartName;
   final String? initialApplicantName;
+  final int? editId;
 
   const ApplicantFormPage({
     super.key,
     this.initialPartName,
     this.initialApplicantName,
+    this.editId,
   });
 
   @override
@@ -381,31 +647,23 @@ class ApplicantFormPage extends StatefulWidget {
 
 class _ApplicantFormPageState extends State<ApplicantFormPage> {
   final _formKey = GlobalKey<FormState>();
-
-  // Core fields
   final _partNameCtrl = TextEditingController();
   final _applicantNameCtrl = TextEditingController();
   final _reasonCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
 
-  // Manufacturer (now free-text like A/C/F)
   bool _includePrevManufacturer = false;
   final _manufacturerCtrl = TextEditingController();
   final _manufacturerIdCtrl = TextEditingController();
 
-  // ACF now free-text (nullable)
   final _applicationCtrl = TextEditingController();
   final _categoryCtrl = TextEditingController();
   final _functionCtrl = TextEditingController();
 
-  // Team requesting (keep dropdown)
   String? _selectedTeam;
+  String _status = 'normal';
 
-  // Status
-  String _status = 'normal'; // 'normal' | 'urgent'
-
-  // Physical rows: key, value, units
   final List<_KVU> _physical = [
     _KVU(
       TextEditingController(),
@@ -416,7 +674,6 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
 
   bool _submitting = false;
 
-  // Team options
   final List<String> _teams = const [
     'R&D',
     'Manufacturing',
@@ -434,8 +691,56 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
     }
     if ((widget.initialApplicantName ?? '').isNotEmpty) {
       _applicantNameCtrl.text = widget.initialApplicantName!;
+    }
+    if (widget.editId != null) {
+      _loadExisting(widget.editId!);
     } else {
-      _hydrateApplicantFromSupabase(); // fallback
+      _hydrateApplicantFromSupabase();
+    }
+  }
+
+  Future<void> _loadExisting(int id) async {
+    try {
+      final row = await Supabase.instance.client
+          .from('info')
+          .select()
+          .eq('id', id)
+          .maybeSingle();
+      if (row == null) return;
+      setState(() {
+        _partNameCtrl.text = row['partname'] ?? '';
+        _applicantNameCtrl.text = row['applicant_name'] ?? '';
+        _reasonCtrl.text = row['reason'] ?? '';
+        _descCtrl.text = row['Description_of_requirement'] ?? '';
+        _notesCtrl.text =
+            (row['notes'] as String?)?.split(':').last.replaceAll('\n', ',,') ??
+            '';
+        _selectedTeam = row['team_requesting'];
+        _status = row['status'] ?? 'normal';
+        if (row['Manufacturer'] != null || row['manufacturer_id'] != null) {
+          _includePrevManufacturer = true;
+          _manufacturerCtrl.text = row['Manufacturer'] ?? '';
+          _manufacturerIdCtrl.text = row['manufacturer_id'] ?? '';
+        }
+        final physicalJson = row['physical'];
+        if (physicalJson != null) {
+          final list = List<Map<String, dynamic>>.from(
+            jsonDecode(physicalJson),
+          );
+          _physical.clear();
+          for (final triple in list) {
+            _physical.add(
+              _KVU(
+                TextEditingController(text: triple['key'] ?? ''),
+                TextEditingController(text: triple['value'] ?? ''),
+                TextEditingController(text: triple['units'] ?? ''),
+              ),
+            );
+          }
+        }
+      });
+    } catch (e) {
+      debugPrint('Failed to load record: $e');
     }
   }
 
@@ -451,7 +756,7 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
           .eq('email', email)
           .maybeSingle();
 
-      final fallback = _emailPrefix(email);
+      final fallback = email.split('@').first;
       final name = ((row?['user'] as String?)?.trim().isNotEmpty ?? false)
           ? (row!['user'] as String).trim()
           : fallback;
@@ -460,62 +765,27 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
       if (_applicantNameCtrl.text.trim().isEmpty) {
         setState(() => _applicantNameCtrl.text = name);
       }
-    } catch (_) {
-      /* ignore */
-    }
-  }
-
-  String _emailPrefix(String email) {
-    final ix = email.indexOf('@');
-    return ix > 0 ? email.substring(0, ix) : email;
-  }
-
-  @override
-  void dispose() {
-    _partNameCtrl.dispose();
-    _applicantNameCtrl.dispose();
-    _reasonCtrl.dispose();
-    _descCtrl.dispose();
-    _notesCtrl.dispose();
-
-    _manufacturerCtrl.dispose();
-    _manufacturerIdCtrl.dispose();
-
-    _applicationCtrl.dispose();
-    _categoryCtrl.dispose();
-    _functionCtrl.dispose();
-
-    for (final triple in _physical) {
-      triple.key.dispose();
-      triple.value.dispose();
-      triple.units.dispose();
-    }
-    super.dispose();
+    } catch (_) {}
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
-    // ACF: nullable free text
     final app = _applicationCtrl.text.trim();
     final cat = _categoryCtrl.text.trim();
     final fun = _functionCtrl.text.trim();
     final acfString = [app, cat, fun].where((e) => e.isNotEmpty).join(' | ');
     final acfOrNull = acfString.isEmpty ? null : acfString;
 
-    // Manufacturer: nullable free text (behind toggle)
-    final manufacturerText = _manufacturerCtrl.text.trim();
-    final manufacturerIdText = _manufacturerIdCtrl.text.trim();
     final manufacturerOrNull =
-        _includePrevManufacturer && manufacturerText.isNotEmpty
-        ? manufacturerText
+        _includePrevManufacturer && _manufacturerCtrl.text.trim().isNotEmpty
+        ? _manufacturerCtrl.text.trim()
         : null;
     final manufacturerIdOrNull =
-        _includePrevManufacturer && manufacturerIdText.isNotEmpty
-        ? manufacturerIdText
+        _includePrevManufacturer && _manufacturerIdCtrl.text.trim().isNotEmpty
+        ? _manufacturerIdCtrl.text.trim()
         : null;
 
-    // Physical as array of {key,value,units}
     final List<Map<String, String>> physicalList = [];
     for (final row in _physical) {
       final k = row.key.text.trim();
@@ -526,36 +796,44 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
       }
     }
 
-    // Notes: ",," -> newline for display later
     final cleanedNotes = _notesCtrl.text.replaceAll(',,', '\n');
     final notesStored =
         '${_applicantNameCtrl.text.trim()}:${cleanedNotes.trim()}';
 
+    final payload = {
+      'partname': _partNameCtrl.text.trim(),
+      'Manufacturer': manufacturerOrNull,
+      'manufacturer_id': manufacturerIdOrNull,
+      'ACF': acfOrNull,
+      'team_requesting': _selectedTeam,
+      'reason': _reasonCtrl.text.trim().isEmpty ? null : _reasonCtrl.text,
+      'Description_of_requirement': _descCtrl.text.trim().isEmpty
+          ? null
+          : _descCtrl.text,
+      'physical': physicalList.isEmpty ? null : jsonEncode(physicalList),
+      'status': _status,
+      'notes': _notesCtrl.text.trim().isEmpty ? null : notesStored,
+      'applicant_name': _applicantNameCtrl.text.trim(),
+    };
+
     setState(() => _submitting = true);
     try {
-      await Supabase.instance.client.from('info').insert({
-        'partname': _partNameCtrl.text.trim(),
-        'Manufacturer': manufacturerOrNull,
-        'manufacturer_id': manufacturerIdOrNull,
-        'ACF': acfOrNull,
-        'team_requesting': _selectedTeam,
-        'reason': _reasonCtrl.text.trim().isEmpty ? null : _reasonCtrl.text,
-        'Description_of_requirement': _descCtrl.text.trim().isEmpty
-            ? null
-            : _descCtrl.text,
-        'physical': physicalList.isEmpty ? null : jsonEncode(physicalList),
-        'status': _status,
-        'notes': _notesCtrl.text.trim().isEmpty ? null : notesStored,
-        'applicant_name': _applicantNameCtrl.text.trim(),
-      });
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Request submitted')));
-      Navigator.pop(context);
+      if (widget.editId != null) {
+        await Supabase.instance.client
+            .from('info')
+            .update(payload)
+            .eq('id', widget.editId!);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Request updated')));
+      } else {
+        await Supabase.instance.client.from('info').insert(payload);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Request submitted')));
+      }
+      if (mounted) Navigator.pop(context);
     } catch (e) {
-      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Submit failed: $e'),
@@ -594,7 +872,11 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
     const primary = Color(0xFF005EB8);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('New Specification Request'),
+        title: Text(
+          widget.editId != null
+              ? 'Edit Specification Request'
+              : 'New Specification Request',
+        ),
         backgroundColor: primary,
         foregroundColor: Colors.white,
       ),
@@ -837,7 +1119,13 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.send),
-                label: Text(_submitting ? 'Submitting…' : 'Submit request'),
+                label: Text(
+                  _submitting
+                      ? 'Submitting…'
+                      : (widget.editId != null
+                            ? 'Update request'
+                            : 'Submit request'),
+                ),
               ),
             ),
             const SizedBox(height: 32),
@@ -856,7 +1144,6 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
   );
 }
 
-/// Small holder for Physical rows
 class _KVU {
   final TextEditingController key;
   final TextEditingController value;
