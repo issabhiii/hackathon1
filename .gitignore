@@ -1,0 +1,60 @@
+# --- Python build/cache ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.pytype/
+.dmypy.json
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Packaging / build artifacts ---
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# --- Logs & runtime junk ---
+*.log
+*.tmp
+*.temp
+
+# --- OS/editor files ---
+# Windows
+Thumbs.db
+Desktop.ini
+# macOS (in case you zip/share across OSes)
+.DS_Store
+.AppleDouble
+# Editors/IDEs
+.vscode/
+.idea/
+*.code-workspace
+
+# --- App-specific (keep repo tidy) ---
+# If you ever add an uploads folder, keep user files out of git:
+static/uploads/
+uploads/
+# Torch/EasyOCR cache dirs (usually outside repo, but ignore just in case)
+.cache/
+*.pth
+*.pt
+
+# --- Env/config you might add later ---
+.env
+.env.*
+*.secret
+*.key
+
+# --- Node (only if you add frontend tooling later) ---
+node_modules/
