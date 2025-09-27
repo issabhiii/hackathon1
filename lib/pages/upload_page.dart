@@ -157,7 +157,7 @@ class _UploadPageState extends State<UploadPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Make sure our overlay **always fills the viewport**, regardless of scroll.
+    // Always fill the viewport so the overlay is truly full-screen.
     return LayoutBuilder(
       builder: (context, constraints) {
         return SizedBox(
@@ -291,16 +291,13 @@ class _BlockOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     return Positioned.fill(
       child: IgnorePointer(
-        // Block all taps behind overlay
         ignoring: false,
         child: Stack(
           children: [
-            // blur + dim entire viewport
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
               child: Container(color: Colors.black.withOpacity(0.38)),
             ),
-            // message card
             Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 520),
@@ -392,17 +389,17 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
   final _descCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
 
-  // Manufacturer
+  // Manufacturer (now free-text like A/C/F)
   bool _includePrevManufacturer = false;
-  String? _selectedManufacturer;
-  String? _selectedManufacturerId;
+  final _manufacturerCtrl = TextEditingController();
+  final _manufacturerIdCtrl = TextEditingController();
 
   // ACF now free-text (nullable)
   final _applicationCtrl = TextEditingController();
   final _categoryCtrl = TextEditingController();
   final _functionCtrl = TextEditingController();
 
-  // Team requesting
+  // Team requesting (keep dropdown)
   String? _selectedTeam;
 
   // Status
@@ -419,7 +416,7 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
 
   bool _submitting = false;
 
-  // Sample dropdown data (kept for Team + Manufacturer)
+  // Team options
   final List<String> _teams = const [
     'R&D',
     'Manufacturing',
@@ -428,12 +425,6 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
     'Field Service',
     'Other',
   ];
-
-  final Map<String, List<String>> _manufacturers = const {
-    'Acme Corp': ['ACM-101', 'ACM-202', 'ACM-303'],
-    'Globex': ['GLO-11', 'GLO-22'],
-    'Initech': ['INI-A', 'INI-B'],
-  };
 
   @override
   void initState() {
@@ -486,9 +477,14 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
     _reasonCtrl.dispose();
     _descCtrl.dispose();
     _notesCtrl.dispose();
+
+    _manufacturerCtrl.dispose();
+    _manufacturerIdCtrl.dispose();
+
     _applicationCtrl.dispose();
     _categoryCtrl.dispose();
     _functionCtrl.dispose();
+
     for (final triple in _physical) {
       triple.key.dispose();
       triple.value.dispose();
@@ -507,6 +503,18 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
     final acfString = [app, cat, fun].where((e) => e.isNotEmpty).join(' | ');
     final acfOrNull = acfString.isEmpty ? null : acfString;
 
+    // Manufacturer: nullable free text (behind toggle)
+    final manufacturerText = _manufacturerCtrl.text.trim();
+    final manufacturerIdText = _manufacturerIdCtrl.text.trim();
+    final manufacturerOrNull =
+        _includePrevManufacturer && manufacturerText.isNotEmpty
+        ? manufacturerText
+        : null;
+    final manufacturerIdOrNull =
+        _includePrevManufacturer && manufacturerIdText.isNotEmpty
+        ? manufacturerIdText
+        : null;
+
     // Physical as array of {key,value,units}
     final List<Map<String, String>> physicalList = [];
     for (final row in _physical) {
@@ -518,7 +526,7 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
       }
     }
 
-    // Notes: turn ",," into newline so it renders nicely later
+    // Notes: ",," -> newline for display later
     final cleanedNotes = _notesCtrl.text.replaceAll(',,', '\n');
     final notesStored =
         '${_applicantNameCtrl.text.trim()}:${cleanedNotes.trim()}';
@@ -527,10 +535,8 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
     try {
       await Supabase.instance.client.from('info').insert({
         'partname': _partNameCtrl.text.trim(),
-        'Manufacturer': _includePrevManufacturer ? _selectedManufacturer : null,
-        'manufacturer_id': _includePrevManufacturer
-            ? _selectedManufacturerId
-            : null,
+        'Manufacturer': manufacturerOrNull,
+        'manufacturer_id': manufacturerIdOrNull,
         'ACF': acfOrNull,
         'team_requesting': _selectedTeam,
         'reason': _reasonCtrl.text.trim().isEmpty ? null : _reasonCtrl.text,
@@ -644,15 +650,7 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
             _sectionTitle('Manufacturer'),
             SwitchListTile.adaptive(
               value: _includePrevManufacturer,
-              onChanged: (v) {
-                setState(() {
-                  _includePrevManufacturer = v;
-                  if (!v) {
-                    _selectedManufacturer = null;
-                    _selectedManufacturerId = null;
-                  }
-                });
-              },
+              onChanged: (v) => setState(() => _includePrevManufacturer = v),
               title: const Text('Include previous manufacturer info'),
               contentPadding: EdgeInsets.zero,
             ),
@@ -660,53 +658,22 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
               Row(
                 children: [
                   Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: _selectedManufacturer,
+                    child: TextField(
+                      controller: _manufacturerCtrl,
                       decoration: const InputDecoration(
-                        labelText: 'Manufacturer *',
+                        labelText: 'Manufacturer (optional)',
                         border: OutlineInputBorder(),
                       ),
-                      items: _manufacturers.keys
-                          .map(
-                            (m) => DropdownMenuItem(value: m, child: Text(m)),
-                          )
-                          .toList(),
-                      onChanged: (v) {
-                        setState(() {
-                          _selectedManufacturer = v;
-                          _selectedManufacturerId = null;
-                        });
-                      },
-                      validator: (v) =>
-                          (v == null || v.isEmpty) ? 'Required' : null,
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: _selectedManufacturerId,
+                    child: TextField(
+                      controller: _manufacturerIdCtrl,
                       decoration: const InputDecoration(
-                        labelText: 'Manufacturer ID *',
+                        labelText: 'Manufacturer ID (optional)',
                         border: OutlineInputBorder(),
                       ),
-                      items:
-                          (_selectedManufacturer == null
-                                  ? const <String>[]
-                                  : _manufacturers[_selectedManufacturer]!)
-                              .map(
-                                (id) => DropdownMenuItem(
-                                  value: id,
-                                  child: Text(id),
-                                ),
-                              )
-                              .toList(),
-                      onChanged: (v) =>
-                          setState(() => _selectedManufacturerId = v),
-                      validator: (v) => (_selectedManufacturer == null)
-                          ? null
-                          : (v == null || v.isEmpty)
-                          ? 'Required'
-                          : null,
                     ),
                   ),
                 ],
