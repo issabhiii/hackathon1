@@ -60,7 +60,7 @@ class _LoginScreenState extends State<LoginScreen> {
           'id': authId, // <-- REQUIRED for UUID PK schema
           'email': email,
           'user': userName,
-          'clearance': 'employee',
+          'clearance': 'uncleared',
           'last_logged': DateTime.now().toIso8601String(),
         });
       } else {
@@ -120,7 +120,7 @@ class _LoginScreenState extends State<LoginScreen> {
         'id': authId, // <-- required for UUID PK
         'email': email,
         'user': name,
-        'clearance': 'employee',
+        'clearance': 'uncleared',
         'last_logged': DateTime.now().toIso8601String(),
       });
 

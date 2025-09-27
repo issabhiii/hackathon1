@@ -1,11 +1,14 @@
 // lib/pages/upload_page.dart
 import 'dart:convert';
-import 'package:flutter/material.dart';
+import 'dart:ui' show ImageFilter;
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'login_screen.dart'; // for Login / Sign Up CTA
+
 /// ---------------------------
-/// UploadPage
+/// UploadPage (auth/clearance-gated)
 /// ---------------------------
 class UploadPage extends StatefulWidget {
   final void Function(Map<String, String>) onSave; // kept for compatibility
@@ -16,16 +19,27 @@ class UploadPage extends StatefulWidget {
 }
 
 class _UploadPageState extends State<UploadPage> {
+  // basic fields
   String? partName;
-  String? applicantName; // replaces "notes" on starter page
+  String? applicantName;
   PlatformFile? selectedFile;
 
   final _applicantNameCtrl = TextEditingController();
 
+  // auth/clearance
+  User? _authUser;
+  String? _clearance; // "executive", "employee", "uncleared", etc.
+
+  bool get _loginRequired => _authUser == null;
+  bool get _awaitingApproval =>
+      _authUser != null && (_clearance ?? '').toLowerCase() == 'uncleared';
+  bool get _blocked => _loginRequired || _awaitingApproval;
+
   @override
   void initState() {
     super.initState();
-    _hydrateApplicantFromSupabase(); // ⬅️ auto-fill on load
+    _bootstrap();
+    _listenAuthChanges();
   }
 
   @override
@@ -34,29 +48,62 @@ class _UploadPageState extends State<UploadPage> {
     super.dispose();
   }
 
-  Future<void> _hydrateApplicantFromSupabase() async {
-    try {
-      final authUser = Supabase.instance.client.auth.currentUser;
-      final email = authUser?.email;
-      if (email == null) return;
+  Future<void> _bootstrap() async {
+    _authUser = Supabase.instance.client.auth.currentUser;
+    if (_authUser == null) {
+      setState(() {
+        _clearance = null;
+        _applicantNameCtrl.text = '';
+        applicantName = null;
+      });
+      return;
+    }
+    await _hydrateFromUsersRow(_authUser!.id, _authUser!.email);
+  }
 
+  void _listenAuthChanges() {
+    Supabase.instance.client.auth.onAuthStateChange.listen((state) async {
+      final session = state.session;
+      if (!mounted) return;
+      if (session?.user != null) {
+        _authUser = session!.user;
+        await _hydrateFromUsersRow(_authUser!.id, _authUser!.email);
+      } else {
+        setState(() {
+          _authUser = null;
+          _clearance = null;
+          _applicantNameCtrl.text = '';
+          applicantName = null;
+        });
+      }
+    });
+  }
+
+  Future<void> _hydrateFromUsersRow(String id, String? email) async {
+    try {
       final row = await Supabase.instance.client
           .from('users')
-          .select('user')
-          .eq('email', email)
+          .select('user, clearance')
+          .eq('id', id)
           .maybeSingle();
 
-      final fallback = _emailPrefix(email);
+      final fallback = _emailPrefix(email ?? '');
       final name = ((row?['user'] as String?)?.trim().isNotEmpty ?? false)
           ? (row!['user'] as String).trim()
           : fallback;
 
-      if (!mounted) return;
-      _applicantNameCtrl.text = name;
-      applicantName = name;
-      setState(() {}); // reflect into UI if needed
+      setState(() {
+        _clearance = (row?['clearance'] as String?)?.trim();
+        _applicantNameCtrl.text = name;
+        applicantName = name;
+      });
     } catch (_) {
-      // ignore; leave blank
+      final fallback = _emailPrefix(email ?? '');
+      setState(() {
+        _clearance = null;
+        _applicantNameCtrl.text = fallback;
+        applicantName = fallback;
+      });
     }
   }
 
@@ -66,6 +113,7 @@ class _UploadPageState extends State<UploadPage> {
   }
 
   Future<void> pickFile() async {
+    if (_blocked) return;
     final result = await FilePicker.platform.pickFiles(type: FileType.any);
     if (result != null) {
       setState(() => selectedFile = result.files.single);
@@ -73,12 +121,23 @@ class _UploadPageState extends State<UploadPage> {
   }
 
   void _snack(String msg, {bool error = false}) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), backgroundColor: error ? Colors.red : null),
     );
   }
 
   Future<void> _goToForm() async {
+    if (_blocked) {
+      _snack(
+        _loginRequired
+            ? 'Please log in to continue.'
+            : 'Awaiting approval. You cannot submit requests yet.',
+        error: true,
+      );
+      return;
+    }
+
     if ((partName ?? '').trim().isEmpty ||
         (applicantName ?? '').trim().isEmpty) {
       _snack('Please enter both Part Name and Applicant Name.', error: true);
@@ -90,7 +149,7 @@ class _UploadPageState extends State<UploadPage> {
       MaterialPageRoute(
         builder: (_) => ApplicantFormPage(
           initialPartName: partName!.trim(),
-          initialApplicantName: applicantName!.trim(), // ⬅️ passed forward
+          initialApplicantName: applicantName!.trim(),
         ),
       ),
     );
@@ -98,6 +157,43 @@ class _UploadPageState extends State<UploadPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Make sure our overlay **always fills the viewport**, regardless of scroll.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SizedBox(
+          width: constraints.maxWidth,
+          height: constraints.maxHeight,
+          child: Stack(
+            children: [
+              _buildContent(),
+              if (_blocked)
+                _BlockOverlay(
+                  loginRequired: _loginRequired,
+                  onLoginTap: () async {
+                    if (!_loginRequired) return;
+                    final name = await Navigator.push<String>(
+                      context,
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    );
+                    if (name != null && name.trim().isNotEmpty) {
+                      _authUser = Supabase.instance.client.auth.currentUser;
+                      if (_authUser != null) {
+                        await _hydrateFromUsersRow(
+                          _authUser!.id,
+                          _authUser!.email,
+                        );
+                      }
+                    }
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildContent() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Center(
@@ -116,8 +212,8 @@ class _UploadPageState extends State<UploadPage> {
                 ),
                 const SizedBox(height: 16),
 
-                // Part name
                 TextField(
+                  enabled: !_blocked,
                   decoration: const InputDecoration(
                     labelText: "Part Name *",
                     border: OutlineInputBorder(),
@@ -126,8 +222,8 @@ class _UploadPageState extends State<UploadPage> {
                 ),
                 const SizedBox(height: 12),
 
-                // Applicant name (auto-filled)
                 TextField(
+                  enabled: !_blocked,
                   controller: _applicantNameCtrl,
                   decoration: const InputDecoration(
                     labelText: "Applicant Name *",
@@ -137,20 +233,27 @@ class _UploadPageState extends State<UploadPage> {
                 ),
                 const SizedBox(height: 12),
 
-                // Optional file picker
                 GestureDetector(
                   onTap: pickFile,
-                  child: Container(
-                    height: 120,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey),
-                      borderRadius: BorderRadius.circular(16),
-                      color: Colors.grey[50],
-                    ),
-                    child: Center(
-                      child: Text(
-                        selectedFile?.name ?? "Tap to select file (optional)",
-                        style: TextStyle(color: Colors.grey[700]),
+                  child: AbsorbPointer(
+                    absorbing: _blocked,
+                    child: Container(
+                      height: 120,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey),
+                        borderRadius: BorderRadius.circular(16),
+                        color: Colors.grey[50],
+                      ),
+                      child: Center(
+                        child: Text(
+                          selectedFile?.name ??
+                              (_blocked
+                                  ? (_loginRequired
+                                        ? "Please log in to attach files"
+                                        : "Locked (awaiting approval)")
+                                  : "Tap to select file (optional)"),
+                          style: TextStyle(color: Colors.grey[700]),
+                        ),
                       ),
                     ),
                   ),
@@ -158,9 +261,8 @@ class _UploadPageState extends State<UploadPage> {
 
                 const SizedBox(height: 20),
 
-                // Continue
                 FilledButton.icon(
-                  onPressed: _goToForm,
+                  onPressed: _blocked ? null : _goToForm,
                   icon: const Icon(Icons.arrow_forward),
                   label: const Text("Continue to Form"),
                   style: FilledButton.styleFrom(
@@ -170,6 +272,93 @@ class _UploadPageState extends State<UploadPage> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// ---------------------------
+/// Full-screen blocking overlay
+/// ---------------------------
+class _BlockOverlay extends StatelessWidget {
+  final bool loginRequired;
+  final VoidCallback? onLoginTap;
+
+  const _BlockOverlay({required this.loginRequired, this.onLoginTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        // Block all taps behind overlay
+        ignoring: false,
+        child: Stack(
+          children: [
+            // blur + dim entire viewport
+            BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+              child: Container(color: Colors.black.withOpacity(0.38)),
+            ),
+            // message card
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        blurRadius: 18,
+                        color: Colors.black.withOpacity(0.25),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        loginRequired ? Icons.lock_outline : Icons.block,
+                        color: loginRequired ? Colors.indigo : Colors.redAccent,
+                        size: 72,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        loginRequired
+                            ? 'Sign in required'
+                            : 'Awaiting approval',
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        loginRequired
+                            ? 'Please sign in to start a new request. You can still browse existing records.'
+                            : 'Your account is currently uncleared. You can browse records, but cannot submit new requests until an executive approves your access.',
+                        textAlign: TextAlign.center,
+                      ),
+                      if (loginRequired) ...[
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: onLoginTap,
+                          icon: const Icon(Icons.login),
+                          label: const Text('Login / Sign Up'),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(48),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -208,10 +397,10 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
   String? _selectedManufacturer;
   String? _selectedManufacturerId;
 
-  // ACF (Application / Category / Function) -> stored together into "ACF"
-  String? _selectedApplication;
-  String? _selectedCategory;
-  String? _selectedFunction;
+  // ACF now free-text (nullable)
+  final _applicationCtrl = TextEditingController();
+  final _categoryCtrl = TextEditingController();
+  final _functionCtrl = TextEditingController();
 
   // Team requesting
   String? _selectedTeam;
@@ -219,13 +408,18 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
   // Status
   String _status = 'normal'; // 'normal' | 'urgent'
 
-  // Physical key-value pairs
-  final List<MapEntry<TextEditingController, TextEditingController>> _physical =
-      [MapEntry(TextEditingController(), TextEditingController())];
+  // Physical rows: key, value, units
+  final List<_KVU> _physical = [
+    _KVU(
+      TextEditingController(),
+      TextEditingController(),
+      TextEditingController(),
+    ),
+  ];
 
   bool _submitting = false;
 
-  // Sample dropdown data
+  // Sample dropdown data (kept for Team + Manufacturer)
   final List<String> _teams = const [
     'R&D',
     'Manufacturing',
@@ -241,40 +435,16 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
     'Initech': ['INI-A', 'INI-B'],
   };
 
-  final List<String> _applications = const [
-    'Radiation Therapy',
-    'Imaging',
-    'Robotics',
-    'Electromechanical',
-    'General',
-  ];
-  final List<String> _categories = const [
-    'Hardware',
-    'Software',
-    'Firmware',
-    'Packaging',
-    'Documentation',
-  ];
-  final List<String> _functions = const [
-    'Cooling',
-    'Motion',
-    'Sensing',
-    'Processing',
-    'UI/UX',
-    'Other',
-  ];
-
   @override
   void initState() {
     super.initState();
-    // Pre-fill from UploadPage
     if ((widget.initialPartName ?? '').isNotEmpty) {
       _partNameCtrl.text = widget.initialPartName!;
     }
     if ((widget.initialApplicantName ?? '').isNotEmpty) {
       _applicantNameCtrl.text = widget.initialApplicantName!;
     } else {
-      _hydrateApplicantFromSupabase(); // ⬅️ fallback auto-fill if nothing passed
+      _hydrateApplicantFromSupabase(); // fallback
     }
   }
 
@@ -300,7 +470,7 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
         setState(() => _applicantNameCtrl.text = name);
       }
     } catch (_) {
-      // ignore; leave as-is
+      /* ignore */
     }
   }
 
@@ -316,9 +486,13 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
     _reasonCtrl.dispose();
     _descCtrl.dispose();
     _notesCtrl.dispose();
-    for (final kv in _physical) {
-      kv.key.dispose();
-      kv.value.dispose();
+    _applicationCtrl.dispose();
+    _categoryCtrl.dispose();
+    _functionCtrl.dispose();
+    for (final triple in _physical) {
+      triple.key.dispose();
+      triple.value.dispose();
+      triple.units.dispose();
     }
     super.dispose();
   }
@@ -326,23 +500,28 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final acf = [
-      _selectedApplication,
-      _selectedCategory,
-      _selectedFunction,
-    ].where((e) => (e ?? '').isNotEmpty).join(' | ');
+    // ACF: nullable free text
+    final app = _applicationCtrl.text.trim();
+    final cat = _categoryCtrl.text.trim();
+    final fun = _functionCtrl.text.trim();
+    final acfString = [app, cat, fun].where((e) => e.isNotEmpty).join(' | ');
+    final acfOrNull = acfString.isEmpty ? null : acfString;
 
-    final Map<String, String> physicalMap = {};
-    for (final kv in _physical) {
-      final k = kv.key.text.trim();
-      final v = kv.value.text.trim();
-      if (k.isNotEmpty && v.isNotEmpty) {
-        physicalMap[k] = v;
+    // Physical as array of {key,value,units}
+    final List<Map<String, String>> physicalList = [];
+    for (final row in _physical) {
+      final k = row.key.text.trim();
+      final v = row.value.text.trim();
+      final u = row.units.text.trim();
+      if (k.isNotEmpty || v.isNotEmpty || u.isNotEmpty) {
+        physicalList.add({'key': k, 'value': v, 'units': u});
       }
     }
 
+    // Notes: turn ",," into newline so it renders nicely later
+    final cleanedNotes = _notesCtrl.text.replaceAll(',,', '\n');
     final notesStored =
-        '${_applicantNameCtrl.text.trim()}:${_notesCtrl.text.trim()}';
+        '${_applicantNameCtrl.text.trim()}:${cleanedNotes.trim()}';
 
     setState(() => _submitting = true);
     try {
@@ -352,13 +531,13 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
         'manufacturer_id': _includePrevManufacturer
             ? _selectedManufacturerId
             : null,
-        'ACF': acf.isEmpty ? null : acf,
+        'ACF': acfOrNull,
         'team_requesting': _selectedTeam,
         'reason': _reasonCtrl.text.trim().isEmpty ? null : _reasonCtrl.text,
         'Description_of_requirement': _descCtrl.text.trim().isEmpty
             ? null
             : _descCtrl.text,
-        'physical': physicalMap.isEmpty ? null : jsonEncode(physicalMap),
+        'physical': physicalList.isEmpty ? null : jsonEncode(physicalList),
         'status': _status,
         'notes': _notesCtrl.text.trim().isEmpty ? null : notesStored,
         'applicant_name': _applicantNameCtrl.text.trim(),
@@ -384,14 +563,23 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
 
   void _addPhysicalRow() {
     setState(() {
-      _physical.add(MapEntry(TextEditingController(), TextEditingController()));
+      _physical.add(
+        _KVU(
+          TextEditingController(),
+          TextEditingController(),
+          TextEditingController(),
+        ),
+      );
     });
   }
 
   void _removePhysicalRow(int index) {
     if (_physical.length == 1) return;
     setState(() {
-      _physical.removeAt(index);
+      final removed = _physical.removeAt(index);
+      removed.key.dispose();
+      removed.value.dispose();
+      removed.units.dispose();
     });
   }
 
@@ -530,44 +718,32 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
             Row(
               children: [
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: _selectedApplication,
+                  child: TextField(
+                    controller: _applicationCtrl,
                     decoration: const InputDecoration(
-                      labelText: 'Application',
+                      labelText: 'Application (optional)',
                       border: OutlineInputBorder(),
                     ),
-                    items: _applications
-                        .map((x) => DropdownMenuItem(value: x, child: Text(x)))
-                        .toList(),
-                    onChanged: (v) => setState(() => _selectedApplication = v),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: _selectedCategory,
+                  child: TextField(
+                    controller: _categoryCtrl,
                     decoration: const InputDecoration(
-                      labelText: 'Category',
+                      labelText: 'Category (optional)',
                       border: OutlineInputBorder(),
                     ),
-                    items: _categories
-                        .map((x) => DropdownMenuItem(value: x, child: Text(x)))
-                        .toList(),
-                    onChanged: (v) => setState(() => _selectedCategory = v),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: _selectedFunction,
+                  child: TextField(
+                    controller: _functionCtrl,
                     decoration: const InputDecoration(
-                      labelText: 'Function',
+                      labelText: 'Function (optional)',
                       border: OutlineInputBorder(),
                     ),
-                    items: _functions
-                        .map((x) => DropdownMenuItem(value: x, child: Text(x)))
-                        .toList(),
-                    onChanged: (v) => setState(() => _selectedFunction = v),
                   ),
                 ),
               ],
@@ -598,10 +774,9 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
             ),
             const SizedBox(height: 16),
 
-            _sectionTitle('Physical (key–value pairs)'),
+            _sectionTitle('Physical (key–value–units)'),
             ...List.generate(_physical.length, (i) {
-              final keyCtrl = _physical[i].key;
-              final valCtrl = _physical[i].value;
+              final row = _physical[i];
               return Padding(
                 padding: EdgeInsets.only(
                   bottom: i == _physical.length - 1 ? 0 : 8,
@@ -609,8 +784,9 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
                 child: Row(
                   children: [
                     Expanded(
+                      flex: 2,
                       child: TextField(
-                        controller: keyCtrl,
+                        controller: row.key,
                         decoration: const InputDecoration(
                           labelText: 'Key (e.g., dimensions)',
                           border: OutlineInputBorder(),
@@ -619,10 +795,22 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
                     ),
                     const SizedBox(width: 8),
                     Expanded(
+                      flex: 2,
                       child: TextField(
-                        controller: valCtrl,
+                        controller: row.value,
                         decoration: const InputDecoration(
                           labelText: 'Value (e.g., 11x12x13)',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 1,
+                      child: TextField(
+                        controller: row.units,
+                        decoration: const InputDecoration(
+                          labelText: 'Units (opt.)',
                           border: OutlineInputBorder(),
                         ),
                       ),
@@ -659,7 +847,7 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
             ),
             const SizedBox(height: 16),
 
-            _sectionTitle('Notes (stored as "applicant: message")'),
+            _sectionTitle('Notes (use ",," for new lines)'),
             TextField(
               controller: _notesCtrl,
               minLines: 2,
@@ -699,4 +887,12 @@ class _ApplicantFormPageState extends State<ApplicantFormPage> {
       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
     ),
   );
+}
+
+/// Small holder for Physical rows
+class _KVU {
+  final TextEditingController key;
+  final TextEditingController value;
+  final TextEditingController units;
+  _KVU(this.key, this.value, this.units);
 }

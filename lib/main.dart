@@ -1,3 +1,4 @@
+// lib/main.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -48,9 +49,9 @@ class _AIParserAppState extends State<AIParserApp> {
     super.initState();
     _hydrateUserFromSupabase();
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((
-      authState,
+      state,
     ) async {
-      if (authState.session != null) {
+      if (state.session != null) {
         await _hydrateUserFromSupabase();
         if (mounted) setState(() {});
       } else {
@@ -97,7 +98,6 @@ class _AIParserAppState extends State<AIParserApp> {
   Widget build(BuildContext context) {
     final isDark = context.watch<AppState>().isDarkMode;
 
-    // 0: Home, 1: Upload, 2: Records, 3: Settings
     final screens = <Widget>[
       Builder(
         builder: (innerContext) => HomePage(
@@ -118,6 +118,7 @@ class _AIParserAppState extends State<AIParserApp> {
           },
         ),
       ),
+      // ⬇️ No `locked:` here — UploadPage handles auth/clearance itself.
       UploadPage(onSave: addRecord),
       DataViewPage(records: _records),
       SettingsScreen(
